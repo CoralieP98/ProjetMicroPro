@@ -21,7 +21,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "iks01a3_motion_sensors.h"
+#include "iks01a3_motion_sensors_ex.h"
+#include <math.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+float get_heading(void);
+void show_angle(void);
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,7 +50,22 @@ SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+IKS01A3_MOTION_SENSOR_Axes_t accel_data;
+IKS01A3_MOTION_SENSOR_Axes_t mag_value;
+int32_t myThreshold = 1;
+uint8_t id;
+float x_min=-834,x_max=-259, y_min=-24, y_max=586,y=0,x=0;
+float x_offset,y_offset;
+char str[9];
+int target_angle=0;
+typedef enum {
+    WAIT_START = 0,
+    TARGET_GENERATED,
+    GUESS_MODE,
+    RESULT
+} GameState;
 
+GameState state = WAIT_START;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,18 +113,98 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
+  MAX7219_Init();
+    MAX7219_DisplayTestStart();
+    HAL_Delay(2000);
+    MAX7219_DisplayTestStop();
   /* USER CODE BEGIN 2 */
+  printf("Hello Project\r\n");
 
+   if(IKS01A3_MOTION_SENSOR_Init(IKS01A3_LIS2MDL_0, MOTION_MAGNETO) == !BSP_ERROR_NONE ){
+     printf("magneto initialization failed\r\n");
+   }
+   IKS01A3_MOTION_SENSOR_SetOutputDataRate(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 100.0f);
+   IKS01A3_MOTION_SENSOR_SetFullScale(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 50);
+
+   if(IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value)== !BSP_ERROR_NONE){
+     printf("Error get axes\r\n");
+   }else{
+
+     printf("x value:%ld\r\n",mag_value.x);
+     printf("y value:%ld\r\n",mag_value.y);
+     printf("z value:%ld\r\n",mag_value.z);
+     x_offset=(x_max+x_min)/2;
+     y_offset=(y_max+y_min)/2;
+
+   }
+   srand(HAL_GetTick());
+   MAX7219_DisplayChar(1,'A');
+   MAX7219_DisplayChar(2,'A');
+   MAX7219_DisplayChar(3,'A');
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	 /* if(IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value)== !BSP_ERROR_NONE){
+	      printf("Error get axes\r\n");
+	    }else{
+	    	if(mag_value.x<x_min){x_min=mag_value.x;}
+	    	if(mag_value.x>x_max){x_max=mag_value.x;}
+	    	if(mag_value.y<y_min){y_min=mag_value.y;}
+	    	if(mag_value.y>y_max){y_max=mag_value.y;}
+	    	printf("x value:%ld\r\n",mag_value.x);
+	        printf("y value:%ld\r\n",mag_value.y);
+	        printf("z value:%ld\r\n",mag_value.z);
+
+
+	    	y=mag_value.y-y_offset;
+	    	x=mag_value.x-x_offset;
+	        float heading = atan2f((float)y,
+	                               (float)x);
+
+	        heading = heading * 180.0f / M_PI;
+
+	        if(heading < 0)
+	        {
+	            heading += 360.0f;
+	        }
+
+
+	        target_angle=rand()%360;
+	        printf("Cap aleatoire= %d deg\r\n", target_angle);
+	        printf("Cap = %f deg\r\n", heading);
+	        printf("x_min : %f\n\r",x_min);
+	        printf("x_max : %f\n\r",x_max);
+	        printf("y_min : %f\n\r",y_min);
+	        printf("y_max : %f\n\r",y_max);
+	        printf("***************\r\n");
+	      //  MAX7219_DisplayChar(1, (int)heading);
+	        snprintf(str, sizeof(str), "%03.0f", heading);
+
+	        MAX7219_DisplayChar(1,str[0]);
+	        MAX7219_DisplayChar(2,str[1]);
+	        MAX7219_DisplayChar(3,str[2]);
+	        MAX7219_DisplayChar(4,'o');
+
+	    }
+
+	  HAL_Delay(1000);   */
+
+
+
+	  	    //void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
+
+	  show_angle();
+  }
+
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+
   /* USER CODE END 3 */
 }
 
@@ -282,6 +382,80 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+int __io_putchar(int ch){
+	HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+	return ch;
+}
+
+float get_heading(void){
+	IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value);
+	y=mag_value.y-y_offset;
+	x=mag_value.x-x_offset;
+	    float heading = atan2f((float)y,
+	                           (float)x) * 180.0f / M_PI;
+
+	    if (heading < 0)
+	        heading += 360.0f;
+
+	    return heading;
+
+}
+
+void show_angle(void){
+
+	snprintf(str, sizeof(str), "%03.0f", get_heading());
+		//printf("fonction show angle\r\n");
+		  MAX7219_DisplayChar(1,str[0]);
+		  MAX7219_DisplayChar(2,str[1]);
+		  MAX7219_DisplayChar(3,str[2]);
+		  MAX7219_DisplayChar(4,'o');
+		  HAL_Delay(1000);
+}
+
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+	  {
+	      if (GPIO_Pin == BP1_Pin)  // bouton user
+	      {
+	          if (state == WAIT_START)
+	          {
+	              target_angle = rand() % 361;
+	              printf("Angle cible: %d deg\r\n", target_angle);
+	              state = TARGET_GENERATED;
+	          }
+	          else if (state == TARGET_GENERATED)
+	          {
+	              printf("Mode vise active\r\n");
+	              state = GUESS_MODE;
+	          }
+	          else if (state == GUESS_MODE)
+	          {
+	              float current = get_heading();
+
+	              printf("Angle actuel: %.1f\r\n", current);
+
+	              float diff = fabsf(current - target_angle);
+
+	              if (diff > 180)
+	                  diff = 360 - diff;
+
+	              if (diff <= 5)
+	              {
+	            	  MAX7219_DisplayChar(1,'G');
+	            	  MAX7219_DisplayChar(2,str[1]);
+	            	  MAX7219_DisplayChar(3,str[2]);
+	                  printf("BRAVO !!!\r\n");
+	              }
+	              else
+	              {
+	                  printf("Rate (diff = %.1f deg)\r\n", diff);
+	              }
+
+	              state = WAIT_START;
+	          }
+	      }
+	  }
+
 
 /* USER CODE END 4 */
 

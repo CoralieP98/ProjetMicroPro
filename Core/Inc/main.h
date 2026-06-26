@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "max7219_Yncrea2.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
