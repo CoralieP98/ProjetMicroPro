@@ -37,6 +37,8 @@
 /* USER CODE BEGIN PD */
 float get_heading(void);
 void show_angle(void);
+uint8_t get_led_count(float heading);
+void set_leds(uint8_t count);
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -113,10 +115,9 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
-  MAX7219_Init();
-    MAX7219_DisplayTestStart();
-    HAL_Delay(2000);
-    MAX7219_DisplayTestStop();
+  MAX7219_DisplayTestStart();
+  HAL_Delay(2000);
+  MAX7219_DisplayTestStop();
   /* USER CODE BEGIN 2 */
   printf("Hello Project\r\n");
 
@@ -130,11 +131,16 @@ int main(void)
      printf("Error get axes\r\n");
    }else{
 
+
      printf("x value:%ld\r\n",mag_value.x);
      printf("y value:%ld\r\n",mag_value.y);
      printf("z value:%ld\r\n",mag_value.z);
      x_offset=(x_max+x_min)/2;
      y_offset=(y_max+y_min)/2;
+
+     printf("x value:%ld\r\n",accel_data.x);
+     	  printf("y value:%ld\r\n",accel_data.y);
+     	  printf("z value:%ld\r\n",accel_data.z);
 
    }
    srand(HAL_GetTick());
@@ -341,23 +347,26 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(L0_GPIO_Port, L0_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, L0_Pin|L1_Pin|L2_Pin|L3_Pin
+                          |L4_Pin|L5_Pin|L6_Pin|L7_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
+  /*Configure GPIO pins : B1_Pin BP3_Pin */
+  GPIO_InitStruct.Pin = B1_Pin|BP3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : L0_Pin */
-  GPIO_InitStruct.Pin = L0_Pin;
+  /*Configure GPIO pins : L0_Pin L1_Pin L2_Pin L3_Pin
+                           L4_Pin L5_Pin L6_Pin L7_Pin */
+  GPIO_InitStruct.Pin = L0_Pin|L1_Pin|L2_Pin|L3_Pin
+                          |L4_Pin|L5_Pin|L6_Pin|L7_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(L0_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SPI_CS_Pin */
   GPIO_InitStruct.Pin = SPI_CS_Pin;
@@ -366,13 +375,16 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SPI_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BP1_Pin */
-  GPIO_InitStruct.Pin = BP1_Pin;
+  /*Configure GPIO pins : BP1_Pin BP2_Pin */
+  GPIO_InitStruct.Pin = BP1_Pin|BP2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BP1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -401,60 +413,137 @@ float get_heading(void){
 
 }
 
-void show_angle(void){
 
-	snprintf(str, sizeof(str), "%03.0f", get_heading());
-		//printf("fonction show angle\r\n");
-		  MAX7219_DisplayChar(1,str[0]);
-		  MAX7219_DisplayChar(2,str[1]);
-		  MAX7219_DisplayChar(3,str[2]);
-		  MAX7219_DisplayChar(4,'o');
-		  HAL_Delay(1000);
+uint8_t get_led_count(float heading) {
+    float diff = fabsf(heading - target_angle);
+    if (diff > 180.0f) diff = 360.0f - diff;
+
+    if      (diff <= 5.0f)   return 8;
+    else if (diff <= 25.0f)  return 7;
+    else if (diff <= 50.0f)  return 6;
+    else if (diff <= 75.0f)  return 5;
+    else if (diff <= 100.0f) return 4;
+    else if (diff <= 120.0f) return 3;
+    else if (diff <= 150.0f) return 2;
+    else                     return 1;
+}
+
+void set_leds(uint8_t count) {
+    HAL_GPIO_WritePin(L0_GPIO_Port, L0_Pin, (count > 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L1_GPIO_Port, L1_Pin, (count > 1) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L2_GPIO_Port, L2_Pin, (count > 2) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L3_GPIO_Port, L3_Pin, (count > 3) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L4_GPIO_Port, L4_Pin, (count > 4) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L5_GPIO_Port, L5_Pin, (count > 5) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L6_GPIO_Port, L6_Pin, (count > 6) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(L7_GPIO_Port, L7_Pin, (count > 7) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+void show_angle(void) {
+    float heading = get_heading();
+    snprintf(str, sizeof(str), "%03.0f", heading);
+
+    MAX7219_DisplayChar(1, str[0]);
+    MAX7219_DisplayChar(2, str[1]);
+    MAX7219_DisplayChar(3, str[2]);
+    MAX7219_DisplayChar(4, 'o');
+
+    if (state == GUESS_MODE) {
+        set_leds(get_led_count(heading));
+    } else {
+        set_leds(0);
+    }
+
+    HAL_Delay(1000);
 }
 
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-	  {
-	      if (GPIO_Pin == BP1_Pin)  // bouton user
-	      {
-	          if (state == WAIT_START)
-	          {
-	              target_angle = rand() % 361;
-	              printf("Angle cible: %d deg\r\n", target_angle);
-	              state = TARGET_GENERATED;
-	          }
-	          else if (state == TARGET_GENERATED)
-	          {
-	              printf("Mode vise active\r\n");
-	              state = GUESS_MODE;
-	          }
-	          else if (state == GUESS_MODE)
-	          {
-	              float current = get_heading();
+{
+    if (GPIO_Pin == BP1_Pin)  // Afficher l'angle cible
+    {
+        target_angle = rand() % 361;
+        char target_str[9];
+        snprintf(target_str, sizeof(target_str), "%03d", target_angle);
+//        MAX7219_DisplayChar(1, target_str[0]);
+//        MAX7219_DisplayChar(2, target_str[1]);
+//        MAX7219_DisplayChar(3, target_str[2]);
+//        MAX7219_DisplayChar(4, 'C');  // C pour Cible
+        printf("Angle cible: %d deg\r\n", target_angle);
+        state = TARGET_GENERATED;
+    }
+    else if (GPIO_Pin == BP2_Pin)  // Activer mode visée
+    {
+        if (state == TARGET_GENERATED) {
+            printf("Mode vise active\r\n");
+            state = GUESS_MODE;
+        }
+    }
+    else if (GPIO_Pin == BP3_Pin)  // Valider l'angle
+    {
+        if (state == GUESS_MODE) {
+            float current = get_heading();
+            snprintf(str, sizeof(str), "%03.0f", current); //La logique : tu lis l'angle, tu le formates dans str ensuite seulement tu utilises str pour afficher.
+            printf("Angle actuel: %.1f\r\n", current);
+            float diff = fabsf(current - target_angle);
+            if (diff > 180) diff = 360 - diff;
+            if (diff <= 5) {
+                MAX7219_DisplayChar(1,'G');
+                MAX7219_DisplayChar(2,str[1]);
+                MAX7219_DisplayChar(3,str[2]);
+                printf("BRAVO !!!\r\n");
+            } else {
+                printf("Rate (diff = %.1f deg)\r\n", diff);
+            }
+            state = TARGET_GENERATED;  // on garde le même angle !
+        }
+    }
+}
 
-	              printf("Angle actuel: %.1f\r\n", current);
-
-	              float diff = fabsf(current - target_angle);
-
-	              if (diff > 180)
-	                  diff = 360 - diff;
-
-	              if (diff <= 5)
-	              {
-	            	  MAX7219_DisplayChar(1,'G');
-	            	  MAX7219_DisplayChar(2,str[1]);
-	            	  MAX7219_DisplayChar(3,str[2]);
-	                  printf("BRAVO !!!\r\n");
-	              }
-	              else
-	              {
-	                  printf("Rate (diff = %.1f deg)\r\n", diff);
-	              }
-
-	              state = WAIT_START;
-	          }
-	      }
-	  }
+//
+//
+//void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+//	  {
+//	      if (GPIO_Pin == BP1_Pin)  // bouton user
+//	      {
+//	          if (state == WAIT_START)
+//	          {
+//	              target_angle = rand() % 361;
+//	              printf("Angle cible: %d deg\r\n", target_angle);
+//	              state = TARGET_GENERATED;
+//	          }
+//	          else if (state == TARGET_GENERATED)
+//	          {
+//	              printf("Mode vise active\r\n");
+//	              state = GUESS_MODE;
+//	          }
+//	          else if (state == GUESS_MODE)
+//	          {
+//	              float current = get_heading();
+//
+//	              printf("Angle actuel: %.1f\r\n", current);
+//
+//	              float diff = fabsf(current - target_angle);
+//
+//	              if (diff > 180)
+//	                  diff = 360 - diff;
+//
+//	              if (diff <= 5)
+//	              {
+//	            	  MAX7219_DisplayChar(1,'G');
+//	            	  MAX7219_DisplayChar(2,str[1]);
+//	            	  MAX7219_DisplayChar(3,str[2]);
+//	                  printf("BRAVO !!!\r\n");
+//	              }
+//	              else
+//	              {
+//	                  printf("Rate (diff = %.1f deg)\r\n", diff);
+//	              }
+//
+//	              state = WAIT_START;
+//	          }
+//	      }
+//	  }
 
 
 /* USER CODE END 4 */
