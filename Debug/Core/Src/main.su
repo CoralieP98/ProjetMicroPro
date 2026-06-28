@@ -1,0 +1,14 @@
+../Core/Src/main.c:96:5:main	48	static
+../Core/Src/main.c:302:6:SystemClock_Config	80	static
+../Core/Src/main.c:346:13:MX_SPI1_Init	8	static
+../Core/Src/main.c:384:13:MX_TIM6_Init	16	static
+../Core/Src/main.c:422:13:MX_USART2_UART_Init	8	static
+../Core/Src/main.c:455:13:MX_GPIO_Init	48	static
+../Core/Src/main.c:517:5:__io_putchar	16	static
+../Core/Src/main.c:522:6:show_angle	24	static
+../Core/Src/main.c:533:6:HAL_GPIO_EXTI_Callback	48	static
+../Core/Src/main.c:642:7:get_heading	16	static
+../Core/Src/main.c:651:9:get_led_count	24	static
+../Core/Src/main.c:664:6:set_leds	16	static
+../Core/Src/main.c:676:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/main.c:688:6:Error_Handler	4	static,ignoring_inline_asm
