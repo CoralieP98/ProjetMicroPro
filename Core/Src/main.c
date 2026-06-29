@@ -4,16 +4,6 @@
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -21,53 +11,69 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include "iks01a3_motion_sensors.h"
-#include "iks01a3_motion_sensors_ex.h"
-#include <math.h>
-#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-float get_heading(void);
-void show_angle(void);
-uint8_t get_led_count(float heading);
-void set_leds(uint8_t count);
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
+
+TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 IKS01A3_MOTION_SENSOR_Axes_t accel_data;
 IKS01A3_MOTION_SENSOR_Axes_t mag_value;
+
 int32_t myThreshold = 1;
 uint8_t id;
-float x_min=-834,x_max=-259, y_min=-24, y_max=586,y=0,x=0;
-float x_offset,y_offset;
+float x_min=-834, x_max=-259, y_min=-24, y_max=586, y=0, x=0;
+float x_offset, y_offset;
 char str[9];
-int target_angle=0;
+int target_angle = 0;
+uint8_t debound_flag = 0;
 typedef enum {
     WAIT_START = 0,
     TARGET_GENERATED,
     GUESS_MODE,
-    RESULT
+    RESULT,
+    ERREUR
 } GameState;
 
 GameState state = WAIT_START;
+
+typedef enum {
+    BOUSSOLE = 0,
+    ACCEL
+} GameMode;
+
+GameMode mode = BOUSSOLE;
+
+/* --- Variables mode ACCEL --- */
+typedef enum {
+    ACCEL_IDLE = 0,
+    ACCEL_WAIT_GO,
+    ACCEL_GO,
+    ACCEL_RESULT
+} AccelTestState;
+
+AccelTestState accel_state = ACCEL_IDLE;
+
+uint32_t accel_go_tick    = 0;
+uint32_t accel_wait_delay = 0;
+
+#define ACCEL_SHOCK_THRESHOLD  200   /* mg – seuil de détection du choc */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,13 +81,12 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 /* USER CODE END 0 */
 
 /**
@@ -92,7 +97,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -101,116 +105,193 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
-  MAX7219_DisplayTestStart();
-  HAL_Delay(2000);
-  MAX7219_DisplayTestStop();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+  MAX7219_Init();
+      MAX7219_DisplayTestStart();
+      HAL_Delay(2000);
+      MAX7219_DisplayTestStop();
   printf("Hello Project\r\n");
 
-   if(IKS01A3_MOTION_SENSOR_Init(IKS01A3_LIS2MDL_0, MOTION_MAGNETO) == !BSP_ERROR_NONE ){
-     printf("magneto initialization failed\r\n");
-   }
-   IKS01A3_MOTION_SENSOR_SetOutputDataRate(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 100.0f);
-   IKS01A3_MOTION_SENSOR_SetFullScale(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 50);
+  if (IKS01A3_MOTION_SENSOR_Init(IKS01A3_LIS2MDL_0, MOTION_MAGNETO) != BSP_ERROR_NONE) {
+      printf("magneto initialization failed\r\n");
+      MAX7219_Clear();
+      MAX7219_DisplayChar(1, 'E');
+      MAX7219_DisplayChar(2, 'R');
+      MAX7219_DisplayChar(3, 'R');
+      state = ERREUR;
+  }
+  if (IKS01A3_MOTION_SENSOR_Enable(IKS01A3_LIS2MDL_0, MOTION_MAGNETO) != BSP_ERROR_NONE) {
+      printf("Erreur enable\r\n");
+      MAX7219_Clear();
+      MAX7219_DisplayChar(1, 'E');
+      MAX7219_DisplayChar(2, 'R');
+      MAX7219_DisplayChar(3, 'R');
+      state = ERREUR;
+  }
+  IKS01A3_MOTION_SENSOR_SetOutputDataRate(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 100.0f);
+  HAL_Delay(100);
+  IKS01A3_MOTION_SENSOR_SetFullScale(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, 50);
+  HAL_Delay(100);
 
-   if(IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value)== !BSP_ERROR_NONE){
-     printf("Error get axes\r\n");
-   }else{
+  /* --- Init accéléromètre LSM6DSO --- */
+  if (IKS01A3_MOTION_SENSOR_Init(IKS01A3_LSM6DSO_0, MOTION_ACCELERO) != BSP_ERROR_NONE) {
+      printf("accel init failed\r\n");
+  } else {
+      IKS01A3_MOTION_SENSOR_Enable(IKS01A3_LSM6DSO_0, MOTION_ACCELERO);
+      IKS01A3_MOTION_SENSOR_SetOutputDataRate(IKS01A3_LSM6DSO_0, MOTION_ACCELERO, 100.0f);
+      IKS01A3_MOTION_SENSOR_SetFullScale(IKS01A3_LSM6DSO_0, MOTION_ACCELERO, 4);
+      printf("accel OK\r\n");
+  }
 
+  if (IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value) != BSP_ERROR_NONE) {
+      printf("Error get axes\r\n");
+      MAX7219_Clear();
+      MAX7219_DisplayChar(1, 'E');
+      MAX7219_DisplayChar(2, 'R');
+      MAX7219_DisplayChar(3, 'R');
+      state = ERREUR;
+  } else {
+      HAL_Delay(100);
+      printf("x value:%ld\r\n", mag_value.x);
+      printf("y value:%ld\r\n", mag_value.y);
+      printf("z value:%ld\r\n", mag_value.z);
+      x_offset = (x_max + x_min) / 2;
+      y_offset = (y_max + y_min) / 2;
+  }
 
-     printf("x value:%ld\r\n",mag_value.x);
-     printf("y value:%ld\r\n",mag_value.y);
-     printf("z value:%ld\r\n",mag_value.z);
-     x_offset=(x_max+x_min)/2;
-     y_offset=(y_max+y_min)/2;
+  srand(HAL_GetTick());
 
-     printf("x value:%ld\r\n",accel_data.x);
-     	  printf("y value:%ld\r\n",accel_data.y);
-     	  printf("z value:%ld\r\n",accel_data.z);
-
-   }
-   srand(HAL_GetTick());
-   MAX7219_DisplayChar(1,'A');
-   MAX7219_DisplayChar(2,'A');
-   MAX7219_DisplayChar(3,'A');
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 /* if(IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value)== !BSP_ERROR_NONE){
-	      printf("Error get axes\r\n");
-	    }else{
-	    	if(mag_value.x<x_min){x_min=mag_value.x;}
-	    	if(mag_value.x>x_max){x_max=mag_value.x;}
-	    	if(mag_value.y<y_min){y_min=mag_value.y;}
-	    	if(mag_value.y>y_max){y_max=mag_value.y;}
-	    	printf("x value:%ld\r\n",mag_value.x);
-	        printf("y value:%ld\r\n",mag_value.y);
-	        printf("z value:%ld\r\n",mag_value.z);
+      /* ========== MODE BOUSSOLE ========== */
+      if (mode == BOUSSOLE) {
 
+          if (state == WAIT_START) {
+              show_angle();
+          }
+          if (state == GUESS_MODE) {
+              float heading = get_heading();
+              set_leds(get_led_count(heading));
+          }
+          if (state == TARGET_GENERATED) {/*
+              char target_str[9];
+              snprintf(target_str, sizeof(target_str), "%03d", target_angle);
+              MAX7219_Clear();
+              MAX7219_DisplayChar(1, target_str[0]);
+              MAX7219_DisplayChar(2, target_str[1]);
+              MAX7219_DisplayChar(3, target_str[2]);
+              MAX7219_DisplayChar(4, 'C');
+              printf("Angle cible: %d deg\r\n", target_angle);*/
+          }
+          if (state == RESULT) {
+              set_leds(0);
+              HAL_Delay(4000);
+              state = WAIT_START;
+          }
+          if (state == ERREUR) {
+        	  MAX7219_Clear();
+              MAX7219_DisplayChar(1, 'E');
+              MAX7219_DisplayChar(2, 'R');
+              MAX7219_DisplayChar(3, 'R');
+              printf("ERROR POWER CYCLE CARD\r\n");
+          }
+        //  printf("state : %d\r\n", state);
+      }
 
-	    	y=mag_value.y-y_offset;
-	    	x=mag_value.x-x_offset;
-	        float heading = atan2f((float)y,
-	                               (float)x);
+      /* ========== MODE ACCEL (test de temps de réaction) ========== */
+      else if (mode == ACCEL) {
 
-	        heading = heading * 180.0f / M_PI;
+          switch (accel_state) {
 
-	        if(heading < 0)
-	        {
-	            heading += 360.0f;
-	        }
+          case ACCEL_IDLE:
+              /* Rien à faire : on attend que BP1 lance le test (voir callback) */
+              break;
 
+          case ACCEL_WAIT_GO:
+              if (HAL_GetTick() - accel_go_tick >= accel_wait_delay) {
+            	  MAX7219_Clear();
 
-	        target_angle=rand()%360;
-	        printf("Cap aleatoire= %d deg\r\n", target_angle);
-	        printf("Cap = %f deg\r\n", heading);
-	        printf("x_min : %f\n\r",x_min);
-	        printf("x_max : %f\n\r",x_max);
-	        printf("y_min : %f\n\r",y_min);
-	        printf("y_max : %f\n\r",y_max);
-	        printf("***************\r\n");
-	      //  MAX7219_DisplayChar(1, (int)heading);
-	        snprintf(str, sizeof(str), "%03.0f", heading);
+                  MAX7219_DisplayChar(2, '6');
+                  MAX7219_DisplayChar(3, 'O');
 
-	        MAX7219_DisplayChar(1,str[0]);
-	        MAX7219_DisplayChar(2,str[1]);
-	        MAX7219_DisplayChar(3,str[2]);
-	        MAX7219_DisplayChar(4,'o');
+                  printf("GO !\r\n");
+                  accel_go_tick = HAL_GetTick();   /* repart comme chrono */
+                  accel_state   = ACCEL_GO;
+              }
+              break;
 
-	    }
+          case ACCEL_GO:
+              if (IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LSM6DSO_0,
+                                                 MOTION_ACCELERO,
+                                                 &accel_data) == BSP_ERROR_NONE)
+              {
+                  int32_t ax = accel_data.x;
+                  int32_t ay = accel_data.y;
+                  int32_t az = accel_data.z - 1000;  /* soustraire ~1 g */
 
-	  HAL_Delay(1000);   */
+                  /* Valeur absolue max des trois axes */
+                  int32_t peak = (ax < 0) ? -ax : ax;
+                  int32_t tmp;
+                  tmp = (ay < 0) ? -ay : ay;
+                  if (tmp > peak) peak = tmp;
+                  tmp = (az < 0) ? -az : az;
+                  if (tmp > peak) peak = tmp;
 
+                  if (peak > ACCEL_SHOCK_THRESHOLD) {
+                      uint32_t reaction_ms = HAL_GetTick() - accel_go_tick;
+                      printf("Temps de reaction : %lu ms\r\n", reaction_ms);
 
+                      char res_str[9];
+                      if (reaction_ms < 10000) {
+                          snprintf(res_str, sizeof(res_str), "%4lu", reaction_ms);
+                      } else {
+                          snprintf(res_str, sizeof(res_str), "SLOU");
+                      }
+                      MAX7219_Clear();
+                      MAX7219_DisplayChar(1, res_str[0]);
+                      MAX7219_DisplayChar(2, res_str[1]);
+                      MAX7219_DisplayChar(3, res_str[2]);
+                      MAX7219_DisplayChar(4, res_str[3]);
 
-	  	    //void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
+                      accel_state = ACCEL_RESULT;
+                  }
+              }
+              break;
 
-	  show_angle();
+          case ACCEL_RESULT:
+              HAL_Delay(4000);
+              accel_state = ACCEL_IDLE;
+              printf("toto\r\n");
+              /* Réaffiche "rdy" pour signaler qu'on est prêt */
+              MAX7219_Clear();
+              MAX7219_DisplayChar(1, 'R');
+              MAX7219_DisplayChar(2, 'D');
+              MAX7219_DisplayChar(3, 'I');
+
+              break;
+          }
+      }
   }
-
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
   /* USER CODE END 3 */
 }
 
@@ -296,6 +377,44 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 0;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 65535;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -353,8 +472,8 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : B1_Pin BP3_Pin */
-  GPIO_InitStruct.Pin = B1_Pin|BP3_Pin;
+  /*Configure GPIO pins : B1_Pin BP4_Pin BP3_Pin */
+  GPIO_InitStruct.Pin = B1_Pin|BP4_Pin|BP3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
@@ -394,30 +513,144 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-int __io_putchar(int ch){
-	HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
-	return ch;
+
+int __io_putchar(int ch) {
+    HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+    return ch;
 }
 
-float get_heading(void){
-	IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value);
-	y=mag_value.y-y_offset;
-	x=mag_value.x-x_offset;
-	    float heading = atan2f((float)y,
-	                           (float)x) * 180.0f / M_PI;
-
-	    if (heading < 0)
-	        heading += 360.0f;
-
-	    return heading;
-
+void show_angle(void) {
+    float heading = get_heading();
+    snprintf(str, sizeof(str), "%03.0f", heading);
+    MAX7219_Clear();
+    MAX7219_DisplayChar(1, str[0]);
+    MAX7219_DisplayChar(2, str[1]);
+    MAX7219_DisplayChar(3, str[2]);
+    MAX7219_DisplayChar(4, 'o');
+    HAL_Delay(1000);
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    /* ---- BP4 : bascule BOUSSOLE <-> ACCEL ---- */
+    if (GPIO_Pin == BP4_Pin) {
+    	if(!debound_flag){
+    				debound_flag = 1;
+    				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+    				HAL_TIM_Base_Start_IT(&htim6);
+        if (mode == BOUSSOLE) {
+            mode = ACCEL;
+            accel_state = ACCEL_IDLE;
+            set_leds(0);
+            printf("Mode ACCEL\r\n");
+            MAX7219_Clear();
+            MAX7219_DisplayChar(1, 'R');
+            MAX7219_DisplayChar(2, 'D');
+            MAX7219_DisplayChar(3, 'I');
+
+        } else {
+            mode = BOUSSOLE;
+            state = WAIT_START;
+            printf("Mode BOUSSOLE\r\n");
+        }
+        return;
+    }}
+
+    /* ---- Boutons mode BOUSSOLE ---- */
+    if (mode == BOUSSOLE) {
+        if (GPIO_Pin == BP1_Pin) {
+        	if(!debound_flag){
+        				debound_flag = 1;
+        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+        				HAL_TIM_Base_Start_IT(&htim6);
+
+            target_angle = rand() % 361;
+            char target_str[9];
+            snprintf(target_str, sizeof(target_str), "%03d", target_angle);
+            MAX7219_Clear();
+            MAX7219_DisplayChar(1, target_str[0]);
+            MAX7219_DisplayChar(2, target_str[1]);
+            MAX7219_DisplayChar(3, target_str[2]);
+            MAX7219_DisplayChar(4, 'C');
+            printf("Angle cible: %d deg\r\n", target_angle);
+            state = TARGET_GENERATED;
+        }}
+        else if (GPIO_Pin == BP2_Pin) {
+        	if(!debound_flag){
+        				debound_flag = 1;
+        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+        				HAL_TIM_Base_Start_IT(&htim6);
+            if (state == TARGET_GENERATED) {
+                printf("Mode vise active\r\n");
+                state = GUESS_MODE;
+            }
+        }}
+        else if (GPIO_Pin == BP3_Pin) {
+        	if(!debound_flag){
+        				debound_flag = 1;
+        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+        				HAL_TIM_Base_Start_IT(&htim6);
+            if (state == GUESS_MODE) {
+                set_leds(0);
+                float current = get_heading();
+                snprintf(str, sizeof(str), "%03.0f", current);
+                printf("Angle actuel: %.1f\r\n", current);
+                float diff = fabsf(current - target_angle);
+                if (diff > 180) diff = 360 - diff;
+                if (diff <= 5) {
+                	 MAX7219_Clear();
+                    MAX7219_DisplayChar(1,'U');
+                    MAX7219_DisplayChar(2,'U');
+                    MAX7219_DisplayChar(3,'I');
+                    MAX7219_DisplayChar(4,'N');
+                    printf("BRAVO !!!\r\n");
+                } else {
+                    printf("Rate (diff = %.1f deg)\r\n", diff);
+                    MAX7219_Clear();
+                    MAX7219_DisplayChar(1,'F');
+                    MAX7219_DisplayChar(2,'A');
+                    MAX7219_DisplayChar(3,'I');
+                    MAX7219_DisplayChar(4,'L');
+                }
+                state = RESULT;
+            }
+        	}}
+    }
+
+    /* ---- BP1 mode ACCEL : lance le test depuis IDLE ---- */
+    else if (mode == ACCEL) {
+        if (GPIO_Pin == BP1_Pin) {
+        	if(!debound_flag){
+        				debound_flag = 1;
+        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+        				HAL_TIM_Base_Start_IT(&htim6);
+            if (accel_state == ACCEL_IDLE) {
+                accel_wait_delay = 1500 + (rand() % 3001);  /* 1.5 à 4.5 s */
+                accel_go_tick    = HAL_GetTick();
+                accel_state      = ACCEL_WAIT_GO;
+                printf("Test lance, attente %lu ms...\r\n", accel_wait_delay);
+                MAX7219_Clear();
+                MAX7219_DisplayChar(1, 'U');
+                MAX7219_DisplayChar(2, 'A');
+                MAX7219_DisplayChar(3, 'I');
+                MAX7219_DisplayChar(4, 'T');
+            }
+        }}
+    }
+}
+
+float get_heading(void) {
+    IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0, MOTION_MAGNETO, &mag_value);
+    y = mag_value.y - y_offset;
+    x = mag_value.x - x_offset;
+    float heading = atan2f((float)y, (float)x) * 180.0f / M_PI;
+    if (heading < 0) heading += 360.0f;
+    return heading;
+}
 
 uint8_t get_led_count(float heading) {
     float diff = fabsf(heading - target_angle);
     if (diff > 180.0f) diff = 360.0f - diff;
-
     if      (diff <= 5.0f)   return 8;
     else if (diff <= 25.0f)  return 7;
     else if (diff <= 50.0f)  return 6;
@@ -439,113 +672,13 @@ void set_leds(uint8_t count) {
     HAL_GPIO_WritePin(L7_GPIO_Port, L7_Pin, (count > 7) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
-void show_angle(void) {
-    float heading = get_heading();
-    snprintf(str, sizeof(str), "%03.0f", heading);
 
-    MAX7219_DisplayChar(1, str[0]);
-    MAX7219_DisplayChar(2, str[1]);
-    MAX7219_DisplayChar(3, str[2]);
-    MAX7219_DisplayChar(4, 'o');
-
-    if (state == GUESS_MODE) {
-        set_leds(get_led_count(heading));
-    } else {
-        set_leds(0);
-    }
-
-    HAL_Delay(1000);
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+	if(htim->Instance == TIM6){
+		debound_flag = 0;
+		HAL_TIM_Base_Stop_IT(&htim6);
+	}
 }
-
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin == BP1_Pin)  // Afficher l'angle cible
-    {
-        target_angle = rand() % 361;
-        char target_str[9];
-        snprintf(target_str, sizeof(target_str), "%03d", target_angle);
-//        MAX7219_DisplayChar(1, target_str[0]);
-//        MAX7219_DisplayChar(2, target_str[1]);
-//        MAX7219_DisplayChar(3, target_str[2]);
-//        MAX7219_DisplayChar(4, 'C');  // C pour Cible
-        printf("Angle cible: %d deg\r\n", target_angle);
-        state = TARGET_GENERATED;
-    }
-    else if (GPIO_Pin == BP2_Pin)  // Activer mode visée
-    {
-        if (state == TARGET_GENERATED) {
-            printf("Mode vise active\r\n");
-            state = GUESS_MODE;
-        }
-    }
-    else if (GPIO_Pin == BP3_Pin)  // Valider l'angle
-    {
-        if (state == GUESS_MODE) {
-            float current = get_heading();
-            snprintf(str, sizeof(str), "%03.0f", current); //La logique : tu lis l'angle, tu le formates dans str ensuite seulement tu utilises str pour afficher.
-            printf("Angle actuel: %.1f\r\n", current);
-            float diff = fabsf(current - target_angle);
-            if (diff > 180) diff = 360 - diff;
-            if (diff <= 5) {
-                MAX7219_DisplayChar(1,'G');
-                MAX7219_DisplayChar(2,str[1]);
-                MAX7219_DisplayChar(3,str[2]);
-                printf("BRAVO !!!\r\n");
-            } else {
-                printf("Rate (diff = %.1f deg)\r\n", diff);
-            }
-            state = TARGET_GENERATED;  // on garde le même angle !
-        }
-    }
-}
-
-//
-//
-//void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-//	  {
-//	      if (GPIO_Pin == BP1_Pin)  // bouton user
-//	      {
-//	          if (state == WAIT_START)
-//	          {
-//	              target_angle = rand() % 361;
-//	              printf("Angle cible: %d deg\r\n", target_angle);
-//	              state = TARGET_GENERATED;
-//	          }
-//	          else if (state == TARGET_GENERATED)
-//	          {
-//	              printf("Mode vise active\r\n");
-//	              state = GUESS_MODE;
-//	          }
-//	          else if (state == GUESS_MODE)
-//	          {
-//	              float current = get_heading();
-//
-//	              printf("Angle actuel: %.1f\r\n", current);
-//
-//	              float diff = fabsf(current - target_angle);
-//
-//	              if (diff > 180)
-//	                  diff = 360 - diff;
-//
-//	              if (diff <= 5)
-//	              {
-//	            	  MAX7219_DisplayChar(1,'G');
-//	            	  MAX7219_DisplayChar(2,str[1]);
-//	            	  MAX7219_DisplayChar(3,str[2]);
-//	                  printf("BRAVO !!!\r\n");
-//	              }
-//	              else
-//	              {
-//	                  printf("Rate (diff = %.1f deg)\r\n", diff);
-//	              }
-//
-//	              state = WAIT_START;
-//	          }
-//	      }
-//	  }
-
-
 /* USER CODE END 4 */
 
 /**
@@ -555,11 +688,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-  while (1)
-  {
-  }
+  while (1) {}
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -573,8 +703,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

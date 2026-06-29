@@ -32,6 +32,11 @@ extern "C" {
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "max7219_Yncrea2.h"
+#include <stdio.h>
+#include "iks01a3_motion_sensors.h"
+#include "iks01a3_motion_sensors_ex.h"
+#include <math.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -73,6 +78,9 @@ void set_leds(uint8_t count);
 #define SPI_MISO_GPIO_Port GPIOA
 #define SPI_MOSI_Pin GPIO_PIN_7
 #define SPI_MOSI_GPIO_Port GPIOA
+#define BP4_Pin GPIO_PIN_5
+#define BP4_GPIO_Port GPIOC
+#define BP4_EXTI_IRQn EXTI9_5_IRQn
 #define L0_Pin GPIO_PIN_1
 #define L0_GPIO_Port GPIOB
 #define L1_Pin GPIO_PIN_2
