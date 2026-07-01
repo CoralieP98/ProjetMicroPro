@@ -3,6 +3,9 @@
   ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
+  *
+  * AUTHORS : Coralie PEREZ
+  * 		  Lino VIDAL
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -38,7 +41,7 @@ IKS01A3_MOTION_SENSOR_Axes_t mag_value;
 
 int32_t myThreshold = 1;
 uint8_t id;
-float x_min=-834, x_max=-259, y_min=-24, y_max=586, y=0, x=0;
+float  y=0, x=0;
 float x_offset, y_offset;
 char str[9];
 int target_angle = 0;
@@ -48,7 +51,8 @@ typedef enum {
     TARGET_GENERATED,
     GUESS_MODE,
     RESULT,
-    ERREUR
+    ERREUR,
+	CALIBRATION
 } GameState;
 
 GameState state = WAIT_START;
@@ -72,6 +76,10 @@ AccelTestState accel_state = ACCEL_IDLE;
 
 uint32_t accel_go_tick    = 0;
 uint32_t accel_wait_delay = 0;
+
+float x_min = 99999, x_max = -99999;
+float y_min = 99999, y_max = -99999;
+uint8_t calibration_done = 0;
 
 #define ACCEL_SHOCK_THRESHOLD  200   /* mg – seuil de détection du choc */
 /* USER CODE END PV */
@@ -190,16 +198,7 @@ int main(void)
               float heading = get_heading();
               set_leds(get_led_count(heading));
           }
-          if (state == TARGET_GENERATED) {/*
-              char target_str[9];
-              snprintf(target_str, sizeof(target_str), "%03d", target_angle);
-              MAX7219_Clear();
-              MAX7219_DisplayChar(1, target_str[0]);
-              MAX7219_DisplayChar(2, target_str[1]);
-              MAX7219_DisplayChar(3, target_str[2]);
-              MAX7219_DisplayChar(4, 'C');
-              printf("Angle cible: %d deg\r\n", target_angle);*/
-          }
+
           if (state == RESULT) {
               set_leds(0);
               HAL_Delay(4000);
@@ -212,7 +211,7 @@ int main(void)
               MAX7219_DisplayChar(3, 'R');
               printf("ERROR POWER CYCLE CARD\r\n");
           }
-        //  printf("state : %d\r\n", state);
+
       }
 
       /* ========== MODE ACCEL (test de temps de réaction) ========== */
@@ -221,7 +220,7 @@ int main(void)
           switch (accel_state) {
 
           case ACCEL_IDLE:
-              /* Rien à faire : on attend que BP1 lance le test (voir callback) */
+              /* n attend que BP1 lance le test (voir callback) */
               break;
 
           case ACCEL_WAIT_GO:
@@ -238,9 +237,7 @@ int main(void)
               break;
 
           case ACCEL_GO:
-              if (IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LSM6DSO_0,
-                                                 MOTION_ACCELERO,
-                                                 &accel_data) == BSP_ERROR_NONE)
+              if (IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LSM6DSO_0, MOTION_ACCELERO,&accel_data) == BSP_ERROR_NONE)
               {
                   int32_t ax = accel_data.x;
                   int32_t ay = accel_data.y;
@@ -286,6 +283,50 @@ int main(void)
               MAX7219_DisplayChar(3, 'I');
 
               break;
+          }
+      }
+      /* Dans la boucle while(1), ajouter ce bloc : */
+
+      else if (mode == CALIBRATION) {
+
+          if (!calibration_done) {
+              /* Lecture magnétomètre */
+              if (IKS01A3_MOTION_SENSOR_GetAxes(IKS01A3_LIS2MDL_0,
+                                                 MOTION_MAGNETO,
+                                                 &mag_value) != BSP_ERROR_NONE) {
+                  printf("Erreur lecture magneto\r\n");
+              } else {
+                  /* Mise à jour des min/max */
+                  if (mag_value.x < x_min) x_min = mag_value.x;
+                  if (mag_value.x > x_max) x_max = mag_value.x;
+                  if (mag_value.y < y_min) y_min = mag_value.y;
+                  if (mag_value.y > y_max) y_max = mag_value.y;
+
+                  printf("x: %ld  y: %ld\r\n", mag_value.x, mag_value.y);
+                  printf("x_min=%.0f x_max=%.0f y_min=%.0f y_max=%.0f\r\n",x_min, x_max, y_min, y_max);
+                  MAX7219_Clear();
+                  MAX7219_DisplayChar(1, 'C');
+                  MAX7219_DisplayChar(2, 'A');
+                  MAX7219_DisplayChar(3, 'L');
+              }
+              HAL_Delay(100);
+          } else {
+              /* Calibration terminée : calcul des offsets */
+              x_offset = (x_max + x_min) / 2;
+              y_offset = (y_max + y_min) / 2;
+
+              printf("=== Calibration terminee ===\r\n");
+              printf("x_min=%.0f  x_max=%.0f\r\n", x_min, x_max);
+              printf("y_min=%.0f  y_max=%.0f\r\n", y_min, y_max);
+              printf("x_offset=%.0f  y_offset=%.0f\r\n", x_offset, y_offset);
+              MAX7219_Clear();
+              MAX7219_DisplayChar(1, 'D');
+              MAX7219_DisplayChar(2, 'O');
+              MAX7219_DisplayChar(3, 'N');
+              MAX7219_DisplayChar(4, 'E');
+              HAL_Delay(3000);
+              mode = BOUSSOLE;   /* retour au mode normal */
+              state = WAIT_START;
           }
       }
   }
@@ -532,12 +573,25 @@ void show_angle(void) {
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+	 if (GPIO_Pin == B1_Pin) {
+	    	if(!debound_flag){
+	    				debound_flag = 1;
+	    				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
+	    				HAL_TIM_Base_Start_IT(&htim6);
+	    				if (mode == CALIBRATION) {
+	    				        calibration_done = 1;   /* stoppe la calibration */
+	    				        return;
+	    				}
+	    				else{ mode=CALIBRATION;}
+
+	    	}}
     /* ---- BP4 : bascule BOUSSOLE <-> ACCEL ---- */
     if (GPIO_Pin == BP4_Pin) {
     	if(!debound_flag){
-    				debound_flag = 1;
-    				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
-    				HAL_TIM_Base_Start_IT(&htim6);
+    		debound_flag = 1;
+    		__HAL_TIM_SET_COUNTER(&htim6, 0);
+    		HAL_TIM_Base_Start_IT(&htim6);
+
         if (mode == BOUSSOLE) {
             mode = ACCEL;
             accel_state = ACCEL_IDLE;
@@ -560,9 +614,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     if (mode == BOUSSOLE) {
         if (GPIO_Pin == BP1_Pin) {
         	if(!debound_flag){
-        				debound_flag = 1;
-        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
-        				HAL_TIM_Base_Start_IT(&htim6);
+        		debound_flag = 1;
+        		__HAL_TIM_SET_COUNTER(&htim6, 0);
+        		HAL_TIM_Base_Start_IT(&htim6);
 
             target_angle = rand() % 361;
             char target_str[9];
@@ -577,9 +631,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         }}
         else if (GPIO_Pin == BP2_Pin) {
         	if(!debound_flag){
-        				debound_flag = 1;
-        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
-        				HAL_TIM_Base_Start_IT(&htim6);
+        		debound_flag = 1;
+        		__HAL_TIM_SET_COUNTER(&htim6, 0);
+        		HAL_TIM_Base_Start_IT(&htim6);
             if (state == TARGET_GENERATED) {
                 printf("Mode vise active\r\n");
                 state = GUESS_MODE;
@@ -587,9 +641,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         }}
         else if (GPIO_Pin == BP3_Pin) {
         	if(!debound_flag){
-        				debound_flag = 1;
-        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
-        				HAL_TIM_Base_Start_IT(&htim6);
+        		debound_flag = 1;
+        		__HAL_TIM_SET_COUNTER(&htim6, 0);
+        		HAL_TIM_Base_Start_IT(&htim6);
             if (state == GUESS_MODE) {
                 set_leds(0);
                 float current = get_heading();
@@ -621,9 +675,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     else if (mode == ACCEL) {
         if (GPIO_Pin == BP1_Pin) {
         	if(!debound_flag){
-        				debound_flag = 1;
-        				__HAL_TIM_SET_COUNTER(&htim6, 0); // met le registre count de timer6 a 0
-        				HAL_TIM_Base_Start_IT(&htim6);
+        		debound_flag = 1;
+        		__HAL_TIM_SET_COUNTER(&htim6, 0);
+        		HAL_TIM_Base_Start_IT(&htim6);
             if (accel_state == ACCEL_IDLE) {
                 accel_wait_delay = 1500 + (rand() % 3001);  /* 1.5 à 4.5 s */
                 accel_go_tick    = HAL_GetTick();
