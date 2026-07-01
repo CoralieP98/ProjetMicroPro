@@ -78,7 +78,7 @@ Pour que l’écran SPI fonctionne correctement avec l’afficheur 7 segments MA
 4. Compiler et téléverser le projet dans **STM32CubeIDE**
 5. Le reste de l'experience utilisateur se deroulera directement sur la carte.
 
-
+Warning : il est conseillé d'eloigner la carte de tout objet métallique pour éviter les interférences avec le magnétomètre.
 
 ### 4. Instructions de jeux et d'initialisation
 
